@@ -14,6 +14,8 @@ changing the routing profile.
 
 ## Quick start
 
+Needs Node 20.9 or newer.
+
 ```bash
 npm install
 npm run dev
@@ -26,8 +28,19 @@ Boulder, Colorado with generated illustrations instead of photos. No API keys,
 no signup, no network. That's there so you can see the whole product working
 before deciding which providers to wire up.
 
-To go live, copy `.env.example` to `.env.local`, add an OpenRouteService key,
-and set `RIDEAHEAD_DEMO=0`.
+### Going live
+
+```bash
+cp .env.example .env.local     # add ORS_API_KEY, set RIDEAHEAD_DEMO=0
+npm run check                  # one real request to every provider
+npm run dev
+```
+
+`npm run check` hits each external API once and reports what came back. Run it
+before the app — if something is misconfigured or a provider's response shape
+has drifted, this says which one in a couple of seconds rather than surfacing as
+an empty preview later. It exits non-zero when a required provider fails, so it
+works in CI as well.
 
 ---
 

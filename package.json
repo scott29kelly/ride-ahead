@@ -10,7 +10,8 @@
     "lint": "next lint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check": "node scripts/check-providers.mjs"
   },
   "dependencies": {
     "maplibre-gl": "^6.0.0",
@@ -26,5 +27,8 @@
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.0",
     "vitest": "^4.1.10"
+  },
+  "engines": {
+    "node": ">=20.9.0"
   }
 }
