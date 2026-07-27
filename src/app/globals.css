@@ -1,0 +1,57 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-bark-950: #12100e;
+  --color-bark-900: #1a1815;
+  --color-bark-800: #24211d;
+  --color-bark-700: #332e28;
+  --color-bark-600: #4a433a;
+  --color-sand-200: #e8e0d4;
+  --color-sand-400: #c4b7a3;
+  --color-clay-400: #e0873f;
+  --color-clay-500: #cf6f28;
+  --color-moss-400: #7fa860;
+  --color-sky-ride: #5fa8d3;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--color-bark-950);
+  color: var(--color-sand-200);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Horizontal filmstrip: snap each frame into place while dragging. */
+.filmstrip {
+  scroll-snap-type: x mandatory;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-bark-600) transparent;
+}
+
+.filmstrip > * {
+  scroll-snap-align: start;
+}
+
+.filmstrip::-webkit-scrollbar {
+  height: 8px;
+}
+
+.filmstrip::-webkit-scrollbar-thumb {
+  background: var(--color-bark-600);
+  border-radius: 999px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
