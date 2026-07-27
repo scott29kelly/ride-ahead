@@ -153,3 +153,16 @@ The code here is yours to license as you like. The data isn't: OpenStreetMap and
 Overpass results are ODbL, Mapillary imagery is CC BY-SA, and Commons photos
 carry per-file licences. The app surfaces attribution on every image it shows —
 keep it there.
+
+---
+
+## Standalone demo
+
+[`public/standalone-demo.html`](public/standalone-demo.html) is the whole demo
+pipeline — geo maths, scoring, flythrough, generated imagery — ported into a
+single self-contained HTML file. No build step, no server, no network. Open it
+in any browser, including on a phone.
+
+It exists so the concept can be shown to someone without asking them to install
+anything. It shares no code with `src/`, so treat it as a demo that has to be
+kept in step by hand rather than a second entry point to the app.

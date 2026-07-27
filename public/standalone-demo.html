@@ -1,0 +1,996 @@
+<title>RideAhead — see the ride before you ride it</title>
+
+<style>
+  /* ---- Tokens -------------------------------------------------------------
+     Palette is grounded in topographic survey maps: sage-grey paper, deep
+     forest ink, waymarker orange for the route, and survey blue for water.
+     Neutrals are biased green so the orange accent reads as chosen, not
+     inherited. ---------------------------------------------------------- */
+  :root {
+    --paper: #e7e9e4;
+    --raised: #f3f4f0;
+    --sunk: #dcdfd8;
+    --ink: #1a231d;
+    --ink-soft: #55605a;
+    --ink-faint: #7c867f;
+    --line: #c9cec5;
+    --accent: #b8501b;
+    --accent-soft: #f0e0d6;
+    --water: #2b6f96;
+    --moss: #4f7a3f;
+
+    --display: Georgia, 'Iowan Old Style', 'Times New Roman', serif;
+    --ui: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --data: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+    --radius: 10px;
+    --shadow: 0 1px 2px rgb(26 35 29 / 0.07), 0 4px 14px rgb(26 35 29 / 0.05);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #121815;
+      --raised: #1b221e;
+      --sunk: #0d1210;
+      --ink: #e0e5dd;
+      --ink-soft: #9aa79f;
+      --ink-faint: #6d7a72;
+      --line: #2c3630;
+      --accent: #e08a44;
+      --accent-soft: #33241a;
+      --water: #63aad4;
+      --moss: #83ad64;
+      --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 14px rgb(0 0 0 / 0.3);
+    }
+  }
+
+  /* The viewer's toggle stamps data-theme on the root and must win over the
+     media query in both directions. */
+  :root[data-theme='light'] {
+    --paper: #e7e9e4; --raised: #f3f4f0; --sunk: #dcdfd8;
+    --ink: #1a231d; --ink-soft: #55605a; --ink-faint: #7c867f;
+    --line: #c9cec5; --accent: #b8501b; --accent-soft: #f0e0d6;
+    --water: #2b6f96; --moss: #4f7a3f;
+    --shadow: 0 1px 2px rgb(26 35 29 / 0.07), 0 4px 14px rgb(26 35 29 / 0.05);
+  }
+
+  :root[data-theme='dark'] {
+    --paper: #121815; --raised: #1b221e; --sunk: #0d1210;
+    --ink: #e0e5dd; --ink-soft: #9aa79f; --ink-faint: #6d7a72;
+    --line: #2c3630; --accent: #e08a44; --accent-soft: #33241a;
+    --water: #63aad4; --moss: #83ad64;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 14px rgb(0 0 0 / 0.3);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--ui);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 28px 18px 60px;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+
+  /* ---- Header ---- */
+  header h1 {
+    font-family: var(--display);
+    font-size: clamp(2rem, 7vw, 3rem);
+    line-height: 1.05;
+    margin: 0;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+  }
+  header h1 em { font-style: normal; color: var(--accent); }
+  header p {
+    margin: 10px 0 0;
+    color: var(--ink-soft);
+    max-width: 58ch;
+  }
+
+  .note {
+    margin-top: 16px;
+    padding: 11px 14px;
+    background: var(--accent-soft);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 6px 6px 0;
+    font-size: 0.85rem;
+    color: var(--ink-soft);
+  }
+  .note strong { color: var(--ink); }
+
+  .eyebrow {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--ink-faint);
+    font-weight: 600;
+    margin: 0 0 10px;
+  }
+
+  /* ---- Route chooser ---- */
+  .routes {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 10px;
+  }
+
+  .route {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    padding: 13px;
+    text-align: left;
+    background: var(--raised);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+    transition: border-color 0.15s, transform 0.15s;
+  }
+  .route:hover { border-color: var(--ink-faint); }
+  .route[aria-pressed='true'] {
+    border-color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+  .route:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .route-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+  .route-name { font-weight: 650; font-size: 0.95rem; }
+  .route-stats {
+    font-family: var(--data);
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-soft);
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .vibes { display: flex; flex-wrap: wrap; gap: 5px; }
+  .vibe {
+    font-size: 0.68rem;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: var(--sunk);
+    color: var(--ink-soft);
+    white-space: nowrap;
+  }
+
+  /* ---- Flythrough ---- */
+  .stage {
+    position: relative;
+    aspect-ratio: 16 / 10;
+    background: var(--sunk);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+  @media (min-width: 640px) { .stage { aspect-ratio: 16 / 9; } }
+
+  .stage img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+  .stage-overlay {
+    position: absolute;
+    inset: auto 0 0 0;
+    padding: 30px 14px 13px;
+    background: linear-gradient(to top, rgb(8 12 10 / 0.92), rgb(8 12 10 / 0.5) 55%, transparent);
+    color: #f0f2ee;
+    pointer-events: none;
+  }
+  .stage-dist {
+    font-family: var(--data);
+    font-size: 1.15rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .stage-meta { font-size: 0.76rem; opacity: 0.78; margin-left: 8px; }
+  .stage-poi { color: #f2ab6d; font-size: 0.85rem; margin-top: 2px; }
+
+  .controls { display: flex; align-items: center; gap: 8px; margin-top: 11px; flex-wrap: wrap; }
+
+  button.ctl {
+    font: inherit;
+    padding: 9px 14px;
+    min-height: 42px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--raised);
+    color: var(--ink);
+    cursor: pointer;
+  }
+  button.ctl:hover { border-color: var(--ink-faint); }
+  button.ctl:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.ctl.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    font-weight: 600;
+    min-width: 140px;
+  }
+  .counter {
+    margin-left: auto;
+    font-family: var(--data);
+    font-size: 0.76rem;
+    color: var(--ink-faint);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .strip {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 8px;
+    margin-top: 9px;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+  }
+  .strip::-webkit-scrollbar { height: 6px; }
+  .strip::-webkit-scrollbar-thumb { background: var(--line); border-radius: 99px; }
+
+  .thumb {
+    position: relative;
+    flex: 0 0 auto;
+    width: 76px;
+    height: 48px;
+    border-radius: 5px;
+    overflow: hidden;
+    border: 2px solid transparent;
+    padding: 0;
+    cursor: pointer;
+    background: var(--sunk);
+    scroll-snap-align: center;
+  }
+  .thumb[aria-current='true'] { border-color: var(--accent); }
+  .thumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .thumb span {
+    position: absolute;
+    inset: auto 0 0 0;
+    background: rgb(8 12 10 / 0.72);
+    color: #f0f2ee;
+    font-family: var(--data);
+    font-size: 0.6rem;
+    text-align: center;
+  }
+
+  /* ---- Panels ---- */
+  .panel {
+    background: var(--raised);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 15px;
+  }
+
+  .statline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 20px;
+    font-family: var(--data);
+    font-size: 0.82rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-soft);
+    margin-top: 6px;
+  }
+  .statline b { color: var(--ink); font-weight: 650; }
+
+  h2.dest {
+    font-family: var(--display);
+    font-size: 1.55rem;
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+  .dest-sub { color: var(--ink-faint); font-size: 0.82rem; margin: 2px 0 0; }
+
+  .cols { display: grid; gap: 20px; }
+  @media (min-width: 700px) { .cols { grid-template-columns: 1fr 260px; } }
+
+  ol.highlights { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+  .hl {
+    display: flex;
+    gap: 11px;
+    align-items: center;
+    padding: 8px;
+    background: var(--raised);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+  }
+  .hl img { width: 62px; height: 44px; border-radius: 5px; object-fit: cover; flex: 0 0 auto; }
+  .hl-body { min-width: 0; flex: 1; }
+  .hl-top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+  .hl-name { font-weight: 600; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hl-km { font-family: var(--data); font-size: 0.72rem; color: var(--ink-faint); flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+  .hl-why { font-size: 0.76rem; color: var(--ink-soft); }
+
+  figure { margin: 0; }
+  .axis {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--data);
+    font-size: 0.68rem;
+    color: var(--ink-faint);
+    margin-top: 3px;
+  }
+
+  footer {
+    border-top: 1px solid var(--line);
+    padding-top: 18px;
+    color: var(--ink-soft);
+    font-size: 0.85rem;
+  }
+  footer h3 { font-family: var(--display); font-size: 1.05rem; margin: 0 0 7px; color: var(--ink); }
+  footer code {
+    font-family: var(--data);
+    font-size: 0.82em;
+    background: var(--sunk);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+  footer ul { margin: 7px 0 0; padding-left: 20px; }
+  footer li { margin-bottom: 4px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Ride<em>Ahead</em></h1>
+    <p>
+      Pick a few places you might ride to. See a photo preview of each route and what you'd
+      pass on the way — then choose the one you actually want.
+    </p>
+    <p class="note">
+      <strong>Sample data.</strong> Three real rides out of central Boulder, Colorado, with
+      generated illustrations standing in for photography. The routing, scoring and flythrough
+      are the real pipeline running live in this page — only the imagery and the map data are
+      bundled.
+    </p>
+  </header>
+
+  <section>
+    <p class="eyebrow">Compare three rides</p>
+    <div class="routes" id="routes"></div>
+  </section>
+
+  <section>
+    <h2 class="dest" id="dest"></h2>
+    <p class="dest-sub" id="dest-sub"></p>
+    <div class="statline" id="statline"></div>
+
+    <div class="stage" style="margin-top:14px">
+      <img id="frame" alt="" />
+      <div class="stage-overlay">
+        <span class="stage-dist" id="frame-dist"></span><span class="stage-meta" id="frame-meta"></span>
+        <div class="stage-poi" id="frame-poi"></div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button class="ctl" id="prev" aria-label="Previous point on the route">←</button>
+      <button class="ctl primary" id="play">Play flythrough</button>
+      <button class="ctl" id="next" aria-label="Next point on the route">→</button>
+      <span class="counter" id="counter"></span>
+    </div>
+
+    <div class="strip" id="strip"></div>
+  </section>
+
+  <section>
+    <p class="eyebrow">Elevation</p>
+    <figure>
+      <svg id="elevation" viewBox="0 0 600 90" preserveAspectRatio="none"
+           style="width:100%;height:90px" role="img" aria-label="Elevation profile"></svg>
+      <figcaption class="axis"><span id="ele-min"></span><span id="ele-max"></span></figcaption>
+    </figure>
+  </section>
+
+  <div class="cols">
+    <section>
+      <p class="eyebrow">What you'll pass</p>
+      <ol class="highlights" id="highlights"></ol>
+    </section>
+    <section>
+      <p class="eyebrow">Route shape</p>
+      <div class="panel">
+        <svg id="sketch" viewBox="0 0 200 150" style="width:100%;height:auto" role="img"
+             aria-label="Shape of the route"></svg>
+      </div>
+    </section>
+  </div>
+
+  <footer>
+    <h3>How this works</h3>
+    <p>
+      Each route is sampled into 24 evenly spaced points. Places worth seeing are found in a
+      corridor along the route line — not a bounding box, which on any bendy route returns piles
+      of scenery you'd never ride past — then scored on category, how far off the line they sit,
+      and whether a photo exists, and spread out so the highlights aren't all in the first
+      kilometre.
+    </p>
+    <p>
+      In the full app, imagery is chosen by <em>which way the camera faces</em>: a photo taken
+      40&nbsp;m away pointing down the road you're riding is a better preview than one at your
+      exact position pointing at a hedge.
+    </p>
+    <h3 style="margin-top:16px">Running it for real</h3>
+    <p>
+      The full version routes anywhere, using OpenRouteService for cycling profiles and elevation,
+      OpenStreetMap for places, and Mapillary or Street View for photography.
+      <code>npm install &amp;&amp; npm run dev</code> — it starts in this demo mode with no API keys
+      at all.
+    </p>
+  </footer>
+</div>
+
+<script>
+/* ===========================================================================
+   RideAhead — demo pipeline, ported to run entirely in the page.
+   Same geo maths and scoring as the server build; no network of any kind.
+   =========================================================================== */
+
+const EARTH = 6371008.8;
+const rad = (d) => (d * Math.PI) / 180;
+const deg = (r) => (r * 180) / Math.PI;
+
+function haversine(a, b) {
+  const dLat = rad(b[1] - a[1]);
+  const dLng = rad(b[0] - a[0]);
+  const h = Math.sin(dLat / 2) ** 2 +
+    Math.cos(rad(a[1])) * Math.cos(rad(b[1])) * Math.sin(dLng / 2) ** 2;
+  return 2 * EARTH * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function bearing(a, b) {
+  const dLng = rad(b[0] - a[0]);
+  const y = Math.sin(dLng) * Math.cos(rad(b[1]));
+  const x = Math.cos(rad(a[1])) * Math.sin(rad(b[1])) -
+    Math.sin(rad(a[1])) * Math.cos(rad(b[1])) * Math.cos(dLng);
+  return (deg(Math.atan2(y, x)) + 360) % 360;
+}
+
+const lerp = (a, b, f) => [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
+
+function buildRoutePoints(coords, elevations) {
+  const points = [];
+  let cumulative = 0;
+  for (let i = 0; i < coords.length; i++) {
+    if (i > 0) cumulative += haversine(coords[i - 1], coords[i]);
+    const next = coords[i + 1];
+    const prev = points.length ? points[points.length - 1].coord : null;
+    points.push({
+      coord: coords[i],
+      distance: cumulative,
+      elevation: elevations ? elevations[i] : undefined,
+      bearing: next ? bearing(coords[i], next) : prev ? bearing(prev, coords[i]) : 0,
+    });
+  }
+  return points;
+}
+
+function sampleAlongRoute(points, count) {
+  if (!points.length) return [];
+  const total = points[points.length - 1].distance;
+  if (total === 0) return [points[0]];
+
+  const out = [];
+  let cursor = 0;
+  for (let i = 0; i < count; i++) {
+    const target = (total * i) / (count - 1);
+    while (cursor < points.length - 2 && points[cursor + 1].distance < target) cursor++;
+    const a = points[cursor];
+    const b = points[cursor + 1] || a;
+    const span = b.distance - a.distance;
+    const f = span > 0 ? (target - a.distance) / span : 0;
+    out.push({
+      coord: lerp(a.coord, b.coord, f),
+      distance: target,
+      elevation: a.elevation === undefined ? undefined : a.elevation + ((b.elevation ?? a.elevation) - a.elevation) * f,
+      bearing: a.bearing,
+    });
+  }
+  return out;
+}
+
+/** Closest approach of a point to the route, in a local flat frame. */
+function projectOntoRoute(points, target) {
+  const latScale = Math.cos(rad(target[1]));
+  let best = { offset: Infinity, distanceAlong: 0 };
+
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i].coord, b = points[i + 1].coord;
+    const ax = a[0] * latScale, ay = a[1];
+    const bx = b[0] * latScale, by = b[1];
+    const px = target[0] * latScale, py = target[1];
+    const dx = bx - ax, dy = by - ay;
+    const lenSq = dx * dx + dy * dy;
+    const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+    const offset = haversine(lerp(a, b, t), target);
+    if (offset < best.offset) {
+      best = {
+        offset,
+        distanceAlong: points[i].distance + (points[i + 1].distance - points[i].distance) * t,
+      };
+    }
+  }
+  return best;
+}
+
+const GRADIENT_WINDOW = 50;
+
+function elevationStats(points) {
+  const withEle = points.filter((p) => p.elevation !== undefined);
+  if (withEle.length < 2) return null;
+
+  let ascent = 0, descent = 0, min = Infinity, max = -Infinity;
+  for (let i = 0; i < withEle.length; i++) {
+    const e = withEle[i].elevation;
+    min = Math.min(min, e); max = Math.max(max, e);
+    if (i === 0) continue;
+    const delta = e - withEle[i - 1].elevation;
+    if (Math.abs(delta) >= 1) { if (delta > 0) ascent += delta; else descent -= delta; }
+  }
+
+  // Sliding window, not adjacent pairs: points sit ~25m apart, so a pairwise
+  // comparison never spans the minimum run and would report zero every time.
+  let steepest = 0, tail = 0;
+  for (let head = 1; head < withEle.length; head++) {
+    while (tail < head - 1 && withEle[head].distance - withEle[tail + 1].distance >= GRADIENT_WINDOW) tail++;
+    const run = withEle[head].distance - withEle[tail].distance;
+    if (run < GRADIENT_WINDOW) continue;
+    steepest = Math.max(steepest, ((withEle[head].elevation - withEle[tail].elevation) / run) * 100);
+  }
+
+  return {
+    min: Math.round(min), max: Math.round(max),
+    ascent: Math.round(ascent), descent: Math.round(descent),
+    maxGradient: Number(steepest.toFixed(1)),
+  };
+}
+
+/* ---- Scoring ---- */
+
+const WEIGHT = { viewpoint: 100, nature: 85, water: 80, historic: 65, landmark: 60, park: 45, art: 40, refuel: 25, services: 10 };
+const REASON = { viewpoint: 'Marked viewpoint', nature: 'Natural feature', water: 'Water feature', historic: 'Historic site', landmark: 'Landmark', park: 'Green space', art: 'Public art', refuel: 'Food and drink stop', services: 'Useful stop' };
+const MAX_OFFSET = 400;
+
+function scorePoi(poi, hasImage) {
+  const proximity = Math.max(0, 1 - poi.offsetFromRoute / MAX_OFFSET);
+  const notability = poi.tags && (poi.tags.wikipedia || poi.tags.heritage || poi.tags.tourism === 'attraction') ? 1.2 : 1;
+  return WEIGHT[poi.category] * proximity * (hasImage ? 1.25 : 1) * notability;
+}
+
+function buildHighlights(pois, limit) {
+  const scored = pois
+    .map((poi) => ({ poi, score: scorePoi(poi, true), reason: describe(poi) }))
+    .filter((e) => e.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  const byDistance = (list) => [...list].sort((a, b) => a.poi.distanceAlongRoute - b.poi.distanceAlongRoute);
+  if (scored.length <= limit) return byDistance(scored);
+
+  const furthest = Math.max(...scored.map((e) => e.poi.distanceAlongRoute));
+  const minGap = furthest / (limit * 1.5);
+  const chosen = [];
+  for (const entry of scored) {
+    if (chosen.length >= limit) break;
+    if (!chosen.some((o) => Math.abs(o.poi.distanceAlongRoute - entry.poi.distanceAlongRoute) < minGap)) chosen.push(entry);
+  }
+  for (const entry of scored) {
+    if (chosen.length >= limit) break;
+    if (!chosen.includes(entry)) chosen.push(entry);
+  }
+  return byDistance(chosen);
+}
+
+function describe(poi) {
+  const base = REASON[poi.category];
+  if (poi.offsetFromRoute > 150) return base + ', ~' + poi.offsetFromRoute + 'm off the route';
+  return base;
+}
+
+function deriveVibes(pois, distance, ele) {
+  const vibes = [];
+  const count = (c) => pois.filter((p) => p.category === c).length;
+
+  if (ele) {
+    const perKm = ele.ascent / Math.max(1, distance / 1000);
+    vibes.push(perKm > 20 ? 'Big climbing' : perKm > 10 ? 'Rolling' : 'Mostly flat');
+    if (ele.maxGradient > 8) vibes.push('Steep pitches (' + ele.maxGradient + '%)');
+  }
+  if (count('viewpoint') >= 2) vibes.push('Scenic');
+  if (count('water') >= 2) vibes.push('Waterside');
+  if (count('park') >= 2 || count('nature') >= 2) vibes.push('Green');
+  if (count('historic') >= 3) vibes.push('Historic');
+  if (count('refuel') >= 3) vibes.push('Good cafe stops');
+
+  const km = distance / 1000;
+  if (km < 8) vibes.push('Quick spin');
+  else if (km > 40) vibes.push('Big day out');
+  return vibes.slice(0, 5);
+}
+
+/* ---- Generated imagery ---- */
+
+const PALETTES = {
+  viewpoint: ['#f9a03f', '#d45f2c', '#4a3b52'],
+  nature: ['#5b8c5a', '#3a6b45', '#2b4034'],
+  water: ['#5fb4d8', '#2e7fa8', '#1d4e63'],
+  historic: ['#c9a227', '#8a6d1f', '#463a1c'],
+  landmark: ['#a97fd0', '#6d4c8f', '#33254a'],
+  park: ['#8bc34a', '#4f8a33', '#2f4a22'],
+  art: ['#ef6f8e', '#b03a63', '#4d2035'],
+  refuel: ['#e8a05c', '#a86a34', '#4a3123'],
+  services: ['#9aa6b2', '#5f6b78', '#31383f'],
+  route: ['#7fb2e5', '#4a7fb5', '#2c4a63'],
+};
+
+function makeRandom(seed) {
+  let state = 2166136261;
+  for (let i = 0; i < seed.length; i++) { state ^= seed.charCodeAt(i); state = Math.imul(state, 16777619); }
+  state = Math.abs(state) || 1;
+  return () => {
+    state ^= state << 13; state ^= state >>> 17; state ^= state << 5;
+    return (state >>> 0) / 4294967296;
+  };
+}
+
+function ridge(random, baseline, amplitude, width) {
+  const pts = ['0,' + baseline];
+  for (let i = 0; i <= 8; i++) pts.push(((width * i) / 8).toFixed(0) + ',' + (baseline - random() * amplitude).toFixed(0));
+  pts.push(width + ',400', '0,400');
+  return pts.join(' ');
+}
+
+/** Deterministic illustration for a spot. Labels live in the HTML overlay, so
+ *  the artwork itself stays clean apart from the corner watermark. */
+function placeholder(seed, category) {
+  const random = makeRandom(seed);
+  const [sky, mid, near] = PALETTES[category] || PALETTES.route;
+  const w = 640;
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="400" viewBox="0 0 ' + w + ' 400">' +
+    '<defs><linearGradient id="s" x1="0" y1="0" x2="0" y2="1">' +
+    '<stop offset="0%" stop-color="' + sky + '" stop-opacity="0.55"/>' +
+    '<stop offset="100%" stop-color="' + mid + '" stop-opacity="0.9"/></linearGradient></defs>' +
+    '<rect width="' + w + '" height="400" fill="url(#s)"/>' +
+    '<circle cx="' + (random() * w).toFixed(0) + '" cy="' + (40 + random() * 60).toFixed(0) + '" r="26" fill="#fff" opacity="0.32"/>' +
+    '<polygon points="' + ridge(random, 250, 90, w) + '" fill="' + mid + '" opacity="0.75"/>' +
+    '<polygon points="' + ridge(random, 310, 60, w) + '" fill="' + near + '" opacity="0.85"/>' +
+    '<rect y="340" width="' + w + '" height="60" fill="' + near + '"/>' +
+    '<path d="M0,400 L' + (w * 0.42).toFixed(0) + ',336 L' + (w * 0.58).toFixed(0) + ',336 L' + w + ',400 Z" fill="#2a2a2e" opacity="0.55"/>' +
+    '<text x="' + (w - 14) + '" y="26" text-anchor="end" font-family="system-ui,sans-serif" font-size="11" fill="#fff" opacity="0.5">GENERATED ILLUSTRATION</text>' +
+    '</svg>';
+  return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+}
+
+/* ---- Sample rides ---- */
+
+const START = 'Boulder Public Library';
+
+const ROUTES = [
+  {
+    key: 'chautauqua',
+    name: 'Chautauqua Park',
+    label: 'Chautauqua Park, Baseline Rd, Boulder, CO',
+    waypoints: [[-105.2797,40.015],[-105.2825,40.0146],[-105.2848,40.0138],[-105.2851,40.0112],[-105.2854,40.0078],[-105.2857,40.0042],[-105.2853,40.0012],[-105.2836,39.9997],[-105.2811,39.9994]],
+    elevations: [1633,1636,1641,1648,1657,1668,1682,1694,1712],
+    pois: [
+      { name: 'Boulder Creek Path', category: 'water', coord: [-105.2828,40.0147] },
+      { name: 'Eben G. Fine Park', category: 'park', coord: [-105.2864,40.0143] },
+      { name: 'Chautauqua Auditorium', category: 'historic', coord: [-105.2818,39.9997], tags: { wikipedia: 'en:Colorado Chautauqua' } },
+      { name: 'Flatirons Vista', category: 'viewpoint', coord: [-105.2822,39.9989] },
+      { name: 'Chautauqua Dining Hall', category: 'refuel', coord: [-105.2815,39.9996] },
+      { name: 'Gregory Canyon Trailhead', category: 'nature', coord: [-105.2848,39.999] },
+      { name: 'Baseline Water Fountain', category: 'services', coord: [-105.284,39.9998] },
+    ],
+  },
+  {
+    key: 'creek',
+    name: 'Boulder Canyon Trailhead',
+    label: 'Boulder Canyon Trailhead, Canyon Blvd, Boulder, CO',
+    waypoints: [[-105.2797,40.015],[-105.2822,40.0148],[-105.2851,40.0145],[-105.288,40.0144],[-105.2912,40.0146],[-105.2947,40.0148],[-105.2985,40.0147]],
+    elevations: [1633,1635,1638,1641,1645,1650,1656],
+    pois: [
+      { name: 'Boulder Creek', category: 'water', coord: [-105.2835,40.0146] },
+      { name: 'Central Park Bandshell', category: 'historic', coord: [-105.2806,40.0152] },
+      { name: 'Boulder Creek Kayak Park', category: 'water', coord: [-105.2872,40.0145] },
+      { name: 'Eben G. Fine Park', category: 'park', coord: [-105.2946,40.0148] },
+      { name: 'Elephant Buttresses', category: 'viewpoint', coord: [-105.2979,40.0143] },
+      { name: 'Creekside Cafe', category: 'refuel', coord: [-105.2812,40.0149] },
+      { name: 'Settlers Park', category: 'park', coord: [-105.2962,40.0151] },
+      { name: 'Boulder Falls Overlook', category: 'water', coord: [-105.2991,40.0145] },
+    ],
+  },
+  {
+    key: 'ncar',
+    name: 'NCAR Mesa Lab',
+    label: 'NCAR Mesa Laboratory, 1850 Table Mesa Dr, Boulder, CO',
+    waypoints: [[-105.2797,40.015],[-105.2789,40.0102],[-105.2782,40.0048],[-105.2776,39.9992],[-105.277,39.9932],[-105.2758,39.9875],[-105.2744,39.9825],[-105.2733,39.9783]],
+    elevations: [1633,1644,1659,1678,1712,1758,1812,1855],
+    pois: [
+      { name: 'Table Mesa Overlook', category: 'viewpoint', coord: [-105.2762,39.9861] },
+      { name: 'NCAR Mesa Laboratory', category: 'landmark', coord: [-105.2735,39.9784], tags: { tourism: 'attraction' } },
+      { name: 'Bear Canyon Creek', category: 'water', coord: [-105.2771,39.9925] },
+      { name: 'NCAR Trailhead', category: 'nature', coord: [-105.2742,39.9789] },
+      { name: 'Mesa Trail Junction', category: 'nature', coord: [-105.2755,39.9841] },
+      { name: 'Martin Park', category: 'park', coord: [-105.2784,40.0035] },
+      { name: 'Table Mesa Shopping Centre', category: 'refuel', coord: [-105.2751,39.9868] },
+    ],
+  },
+];
+
+const FRAMES = 24;
+const FRAME_RADIUS = 250;
+
+/** Expand sparse waypoints into a route line with a point roughly every 25m. */
+function densify(route) {
+  const coords = [], elevations = [];
+  for (let i = 0; i < route.waypoints.length - 1; i++) {
+    const from = route.waypoints[i], to = route.waypoints[i + 1];
+    const steps = Math.max(2, Math.round(haversine(from, to) / 25));
+    for (let s = 0; s < steps; s++) {
+      const f = s / steps;
+      coords.push(lerp(from, to, f));
+      elevations.push(route.elevations[i] + (route.elevations[i + 1] - route.elevations[i]) * f);
+    }
+  }
+  coords.push(route.waypoints[route.waypoints.length - 1]);
+  elevations.push(route.elevations[route.elevations.length - 1]);
+  return buildRoutePoints(coords, elevations);
+}
+
+function buildPreview(route) {
+  const points = densify(route);
+  const distance = points[points.length - 1].distance;
+
+  const pois = route.pois.map((poi, i) => {
+    const p = projectOntoRoute(points, poi.coord);
+    return {
+      id: route.key + '/' + i,
+      name: poi.name,
+      category: poi.category,
+      coord: poi.coord,
+      tags: poi.tags || {},
+      offsetFromRoute: Math.round(p.offset),
+      distanceAlongRoute: Math.round(p.distanceAlong),
+    };
+  });
+
+  const frames = sampleAlongRoute(points, FRAMES).map((sample) => {
+    const nearby = pois.filter((poi) => Math.abs(poi.distanceAlongRoute - sample.distance) < FRAME_RADIUS);
+    return {
+      distance: Math.round(sample.distance),
+      coord: sample.coord,
+      bearing: Math.round(sample.bearing),
+      elevation: sample.elevation === undefined ? undefined : Math.round(sample.elevation),
+      nearbyPois: nearby,
+      image: placeholder(route.key + '-' + Math.round(sample.distance), nearby.length ? nearby[0].category : 'route'),
+    };
+  });
+
+  const ele = elevationStats(points);
+  const highlights = buildHighlights(pois, 8).map((h) => ({ ...h, image: placeholder(h.poi.id, h.poi.category) }));
+
+  return {
+    name: route.name,
+    label: route.label,
+    distance,
+    duration: (distance / 1000 / 15) * 3600,
+    geometry: points.map((p) => p.coord),
+    elevation: ele,
+    elevationSeries: sampleAlongRoute(points, 120).map((p) => [Math.round(p.distance), Math.round(p.elevation)]),
+    frames,
+    highlights,
+    vibes: deriveVibes(pois, distance, ele),
+  };
+}
+
+/* ---- Rendering ---- */
+
+const previews = ROUTES.map(buildPreview);
+let active = 0;
+let frameIndex = 0;
+let timer = null;
+
+const el = (id) => document.getElementById(id);
+const km = (m) => (m / 1000 < 10 ? (m / 1000).toFixed(1) : Math.round(m / 1000)) + ' km';
+const mins = (s) => {
+  const total = Math.round(s / 60);
+  return total < 60 ? total + ' min' : Math.floor(total / 60) + 'h ' + String(total % 60).padStart(2, '0') + 'm';
+};
+const COMPASS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+const compass = (b) => COMPASS[Math.round(b / 22.5) % 16];
+
+function renderRoutes() {
+  el('routes').innerHTML = previews.map((p, i) =>
+    '<button class="route" aria-pressed="' + (i === active) + '" data-route="' + i + '">' +
+      '<div class="route-top"><span class="route-name">' + p.name + '</span></div>' +
+      '<div class="route-stats"><span>' + km(p.distance) + '</span><span>' + mins(p.duration) + '</span>' +
+        (p.elevation ? '<span>&uarr; ' + p.elevation.ascent + ' m</span>' : '') + '</div>' +
+      '<div class="vibes">' + p.vibes.map((v) => '<span class="vibe">' + v + '</span>').join('') + '</div>' +
+    '</button>'
+  ).join('');
+
+  for (const button of el('routes').children) {
+    button.addEventListener('click', () => { select(Number(button.dataset.route)); });
+  }
+}
+
+function select(index) {
+  active = index;
+  frameIndex = 0;
+  stop();
+  renderRoutes();
+  renderRoute();
+}
+
+function renderRoute() {
+  const p = previews[active];
+  el('dest').textContent = p.name;
+  el('dest-sub').textContent = 'From ' + START + ' · ' + p.label;
+
+  el('statline').innerHTML =
+    '<span><b>' + km(p.distance) + '</b> ride</span>' +
+    '<span>~<b>' + mins(p.duration) + '</b></span>' +
+    (p.elevation ? '<span>&uarr; <b>' + p.elevation.ascent + ' m</b> climbing</span>' +
+      '<span>steepest <b>' + p.elevation.maxGradient + '%</b></span>' : '');
+
+  el('strip').innerHTML = p.frames.map((f, i) =>
+    '<button class="thumb" data-frame="' + i + '" aria-current="' + (i === frameIndex) + '" ' +
+      'aria-label="Jump to ' + km(f.distance) + '">' +
+      '<img src="' + f.image + '" alt="" loading="lazy">' +
+      '<span>' + (f.distance / 1000).toFixed(1) + '</span></button>'
+  ).join('');
+
+  for (const button of el('strip').children) {
+    button.addEventListener('click', () => { stop(); goTo(Number(button.dataset.frame)); });
+  }
+
+  renderHighlights(p);
+  renderElevation(p);
+  renderSketch(p);
+  renderFrame();
+}
+
+function renderFrame() {
+  const p = previews[active];
+  const f = p.frames[frameIndex];
+
+  el('frame').src = f.image;
+  el('frame').alt = 'Illustrated view ' + km(f.distance) + ' along the route to ' + p.name;
+  el('frame-dist').textContent = km(f.distance) + ' in';
+  el('frame-meta').textContent = 'heading ' + compass(f.bearing) + (f.elevation !== undefined ? ' · ' + f.elevation + ' m' : '');
+  el('frame-poi').textContent = f.nearbyPois.map((poi) => poi.name).join(' · ');
+  el('counter').textContent = (frameIndex + 1) + ' / ' + p.frames.length;
+
+  for (const button of el('strip').children) {
+    button.setAttribute('aria-current', String(Number(button.dataset.frame) === frameIndex));
+  }
+  const activeThumb = el('strip').children[frameIndex];
+  if (activeThumb) {
+    el('strip').scrollTo({
+      left: activeThumb.offsetLeft - el('strip').clientWidth / 2 + activeThumb.clientWidth / 2,
+      behavior: 'smooth',
+    });
+  }
+
+  renderElevation(p);
+}
+
+function goTo(index) {
+  const total = previews[active].frames.length;
+  frameIndex = (index + total) % total;
+  renderFrame();
+}
+
+function stop() {
+  if (timer) { clearInterval(timer); timer = null; }
+  el('play').textContent = 'Play flythrough';
+}
+
+el('play').addEventListener('click', () => {
+  if (timer) { stop(); return; }
+  // Restart from the top if the last run reached the destination.
+  if (frameIndex >= previews[active].frames.length - 1) goTo(0);
+  el('play').textContent = 'Pause';
+  timer = setInterval(() => {
+    if (frameIndex >= previews[active].frames.length - 1) { stop(); return; }
+    goTo(frameIndex + 1);
+  }, 1300);
+});
+
+el('prev').addEventListener('click', () => { stop(); goTo(frameIndex - 1); });
+el('next').addEventListener('click', () => { stop(); goTo(frameIndex + 1); });
+
+function renderElevation(p) {
+  const svg = el('elevation');
+  if (!p.elevationSeries || p.elevationSeries.length < 2) { svg.innerHTML = ''; return; }
+
+  const w = 600, h = 90;
+  const distances = p.elevationSeries.map((s) => s[0]);
+  const elevs = p.elevationSeries.map((s) => s[1]);
+  const total = Math.max(...distances, 1);
+  const low = Math.min(...elevs);
+  const span = Math.max(Math.max(...elevs) - low, 20);
+
+  const pts = p.elevationSeries.map(([d, e]) =>
+    ((d / total) * w).toFixed(1) + ',' + (h - ((e - low) / span) * (h - 10) - 5).toFixed(1));
+
+  const markerX = ((p.frames[frameIndex].distance / total) * w).toFixed(1);
+
+  svg.innerHTML =
+    '<defs><linearGradient id="ef" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0%" stop-color="var(--accent)" stop-opacity="0.4"/>' +
+      '<stop offset="100%" stop-color="var(--accent)" stop-opacity="0.03"/></linearGradient></defs>' +
+    '<path d="M0,' + h + ' L' + pts.join(' L') + ' L' + w + ',' + h + ' Z" fill="url(#ef)"/>' +
+    '<path d="M' + pts.join(' L') + '" fill="none" stroke="var(--accent)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>' +
+    '<line x1="' + markerX + '" y1="0" x2="' + markerX + '" y2="' + h + '" stroke="var(--ink)" ' +
+      'stroke-width="1" stroke-dasharray="3 3" vector-effect="non-scaling-stroke" opacity="0.65"/>';
+
+  el('ele-min').textContent = low + ' m';
+  el('ele-max').textContent = Math.max(...elevs) + ' m';
+}
+
+function renderSketch(p) {
+  const w = 200, h = 150, pad = 14;
+  const lngs = p.geometry.map((c) => c[0]), lats = p.geometry.map((c) => c[1]);
+  const west = Math.min(...lngs), east = Math.max(...lngs);
+  const south = Math.min(...lats), north = Math.max(...lats);
+
+  // Longitude degrees are shorter than latitude degrees away from the equator,
+  // so correct for it or the shape leans.
+  const latScale = Math.cos(rad((north + south) / 2));
+  const spanX = Math.max((east - west) * latScale, 1e-6);
+  const spanY = Math.max(north - south, 1e-6);
+  const scale = Math.min((w - pad * 2) / spanX, (h - pad * 2) / spanY);
+  const offX = (w - spanX * scale) / 2, offY = (h - spanY * scale) / 2;
+  const project = (c) => [offX + (c[0] - west) * latScale * scale, offY + (north - c[1]) * scale];
+
+  const path = p.geometry.map((c, i) => {
+    const [x, y] = project(c);
+    return (i ? 'L' : 'M') + x.toFixed(1) + ',' + y.toFixed(1);
+  }).join(' ');
+
+  const [sx, sy] = project(p.geometry[0]);
+  const [ex, ey] = project(p.geometry[p.geometry.length - 1]);
+  const [mx, my] = project(p.frames[frameIndex].coord);
+
+  el('sketch').innerHTML =
+    '<path d="' + path + '" fill="none" stroke="var(--water)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+    p.highlights.map((hl) => {
+      const [x, y] = project(hl.poi.coord);
+      return '<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="2.5" fill="var(--accent)"/>';
+    }).join('') +
+    '<circle cx="' + sx.toFixed(1) + '" cy="' + sy.toFixed(1) + '" r="4" fill="var(--moss)"/>' +
+    '<circle cx="' + ex.toFixed(1) + '" cy="' + ey.toFixed(1) + '" r="4" fill="var(--accent)"/>' +
+    '<circle cx="' + mx.toFixed(1) + '" cy="' + my.toFixed(1) + '" r="3.5" fill="var(--ink)" stroke="var(--paper)" stroke-width="1.5"/>';
+}
+
+function renderHighlights(p) {
+  el('highlights').innerHTML = p.highlights.map((hl) =>
+    '<li class="hl">' +
+      '<img src="' + hl.image + '" alt="">' +
+      '<div class="hl-body"><div class="hl-top">' +
+        '<span class="hl-name">' + hl.poi.name + '</span>' +
+        '<span class="hl-km">' + km(hl.poi.distanceAlongRoute) + '</span>' +
+      '</div><div class="hl-why">' + hl.reason + '</div></div>' +
+    '</li>'
+  ).join('');
+}
+
+renderRoutes();
+renderRoute();
+</script>
