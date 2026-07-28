@@ -84,6 +84,26 @@ The pipeline lives in [`src/lib/pipeline.ts`](src/lib/pipeline.ts):
 7. **Summarise** the route into distance, climbing, and a few plain-language
    vibes like `Waterside` or `Big climbing`.
 
+### Choosing between imagery sources
+
+When both are configured, each frame goes to whichever source can actually show
+you the road ahead:
+
+1. **Street View, where it covers your line.** Its heading is a request
+   parameter, so the camera points exactly down the direction of travel.
+   Mapillary can only offer the best angle that happens to exist.
+2. **Mapillary, everywhere else.** If the nearest panorama sits more than 35m
+   off the route, that is usually Google's coverage of a parallel road rather
+   than the path you are on — real imagery, wrong vantage point.
+3. **Street View again as a last resort**, if Mapillary has nothing. A
+   slightly-off view beats a blank frame.
+
+Deciding costs nothing. The Street View metadata endpoint is free and the
+billable request only fires when an image URL is actually loaded, so a
+panorama that gets looked up and rejected is never paid for.
+
+`RIDEAHEAD_IMAGERY_PRIORITY=mapillary` pins it to free imagery.
+
 ### Two decisions worth calling out
 
 **Photos are chosen by facing, not just proximity.** A preview should show what
@@ -154,7 +174,8 @@ has to be run somewhere with network access to those hosts.
   elevation profile, no climbing figure, and no gradient.
 - **Imagery coverage is uneven.** Mapillary is excellent in some cities and
   absent in others. A preview of a rural route may come back with very few
-  frames.
+  frames. With `GOOGLE_MAPS_API_KEY` set, Street View fills most road gaps —
+  but it is metered, and it never drove the paths that make a ride good.
 - **Nothing is cached.** Every request re-routes and re-fetches. Identical
   requests should be cached by route hash before this faces real traffic.
 - **Highlight scoring is hand-tuned**, not learned. The weights in

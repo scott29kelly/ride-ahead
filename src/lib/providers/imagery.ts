@@ -238,6 +238,54 @@ export async function findStreetViewImage(query: ImageryQuery): Promise<Image | 
   };
 }
 
+/**
+ * How far the nearest Street View panorama can sit from the route before we
+ * stop trusting it to show what you'd actually see.
+ *
+ * Google drove roads. When a route follows a separated bike path, canal
+ * towpath or rail trail, the closest panorama is often on a parallel road —
+ * real coverage, wrong vantage point. Beyond this distance, Mapillary's
+ * on-the-path imagery is the better preview even though it is lower quality.
+ */
+const STREET_VIEW_MAX_OFFSET_M = 35;
+
+/**
+ * Best available photo for a spot on the route.
+ *
+ * Street View wins where it genuinely covers your line: its heading is a
+ * request parameter, so the camera points exactly down the direction of
+ * travel, where Mapillary can only offer the least-bad angle that happens to
+ * exist. Mapillary wins on everything Google never drove, which for cycling is
+ * most of the good bits.
+ *
+ * Probing costs nothing. The Street View metadata endpoint is free and the
+ * billable request only happens when the returned image URL is actually
+ * loaded, so a panorama we look up and then reject is never paid for.
+ */
+export async function findFrameImage(query: ImageryQuery): Promise<Image | null> {
+  if (!preferStreetView()) {
+    return (await findMapillaryImage(query)) ?? (await findStreetViewImage(query));
+  }
+
+  const streetView = await findStreetViewImage(query);
+  if (streetView && onOurLine(streetView, query)) return streetView;
+
+  // Either no coverage, or coverage that is looking at a different road.
+  return (await findMapillaryImage(query)) ?? streetView;
+}
+
+function preferStreetView(): boolean {
+  if (!hasStreetView()) return false;
+  // Explicit override for anyone who would rather stay on free imagery, or who
+  // rides mostly on paths where Google's coverage is a liability.
+  return process.env.RIDEAHEAD_IMAGERY_PRIORITY !== 'mapillary';
+}
+
+function onOurLine(image: Image, query: ImageryQuery): boolean {
+  if (!image.coord) return true; // No position reported; assume Google got it right.
+  return haversine(image.coord, query.coord) <= STREET_VIEW_MAX_OFFSET_M;
+}
+
 function stripHtml(value: string): string {
   return value
     .replace(/<[^>]*>/g, '')

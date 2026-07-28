@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LngLat } from '../types';
-import { findMapillaryImage, findStreetViewImage } from './imagery';
+import { findFrameImage, findMapillaryImage, findStreetViewImage } from './imagery';
 
 const COORD: LngLat = [-105.2797, 40.015];
 
@@ -32,7 +32,33 @@ afterEach(() => {
   vi.unstubAllGlobals();
   delete process.env.MAPILLARY_TOKEN;
   delete process.env.GOOGLE_MAPS_API_KEY;
+  delete process.env.RIDEAHEAD_IMAGERY_PRIORITY;
 });
+
+/** Route each host to its own canned response, so ordering is observable. */
+function mockByHost(responses: { mapillary?: unknown; streetView?: unknown }) {
+  const spy = vi.fn(async (url: string, _init?: RequestInit) => {
+    const body = url.includes('mapillary') ? responses.mapillary : responses.streetView;
+    return {
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: async () => body ?? {},
+      text: async () => '',
+    };
+  });
+  vi.stubGlobal('fetch', spy);
+  return spy;
+}
+
+/** Street View metadata reporting a panorama `offsetDegrees` east of the query. */
+function streetViewMetadata(offsetDegrees = 0) {
+  return {
+    status: 'OK',
+    date: '2024-09',
+    location: { lat: COORD[1], lng: COORD[0] + offsetDegrees },
+  };
+}
 
 describe('findMapillaryImage', () => {
   it('sends the token as an OAuth header, not in the query string', async () => {
@@ -148,5 +174,70 @@ describe('findStreetViewImage', () => {
 
     expect(await findStreetViewImage({ coord: COORD, bearing: 90 })).toBeNull();
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('findFrameImage', () => {
+  it('prefers Street View where it covers the line you are riding', async () => {
+    process.env.GOOGLE_MAPS_API_KEY = 'test-key';
+    process.env.MAPILLARY_TOKEN = 'MLY|test';
+    mockByHost({ streetView: streetViewMetadata(0), mapillary: { data: [mapillaryImage()] } });
+
+    const image = await findFrameImage({ coord: COORD, bearing: 90 });
+
+    // Street View's heading is a request parameter, so it faces exactly the
+    // way you ride — Mapillary can only offer the best angle that exists.
+    expect(image?.source).toBe('street-view');
+  });
+
+  it('falls back to Mapillary when the nearest panorama is off the route', async () => {
+    process.env.GOOGLE_MAPS_API_KEY = 'test-key';
+    process.env.MAPILLARY_TOKEN = 'MLY|test';
+    // ~85m east: real coverage, but on a parallel road rather than the path.
+    mockByHost({ streetView: streetViewMetadata(0.001), mapillary: { data: [mapillaryImage()] } });
+
+    const image = await findFrameImage({ coord: COORD, bearing: 90 });
+
+    expect(image?.source).toBe('mapillary');
+  });
+
+  it('still uses distant Street View when Mapillary has nothing', async () => {
+    process.env.GOOGLE_MAPS_API_KEY = 'test-key';
+    process.env.MAPILLARY_TOKEN = 'MLY|test';
+    mockByHost({ streetView: streetViewMetadata(0.001), mapillary: { data: [] } });
+
+    // A slightly-off view beats a blank frame.
+    expect((await findFrameImage({ coord: COORD, bearing: 90 }))?.source).toBe('street-view');
+  });
+
+  it('falls back to Mapillary where Street View has no coverage at all', async () => {
+    process.env.GOOGLE_MAPS_API_KEY = 'test-key';
+    process.env.MAPILLARY_TOKEN = 'MLY|test';
+    mockByHost({ streetView: { status: 'ZERO_RESULTS' }, mapillary: { data: [mapillaryImage()] } });
+
+    expect((await findFrameImage({ coord: COORD, bearing: 90 }))?.source).toBe('mapillary');
+  });
+
+  it('honours an explicit preference for free imagery', async () => {
+    process.env.GOOGLE_MAPS_API_KEY = 'test-key';
+    process.env.MAPILLARY_TOKEN = 'MLY|test';
+    process.env.RIDEAHEAD_IMAGERY_PRIORITY = 'mapillary';
+    const fetchSpy = mockByHost({
+      streetView: streetViewMetadata(0),
+      mapillary: { data: [mapillaryImage()] },
+    });
+
+    const image = await findFrameImage({ coord: COORD, bearing: 90 });
+
+    expect(image?.source).toBe('mapillary');
+    // Mapillary answered, so Street View is never even probed.
+    expect(fetchSpy.mock.calls.every(([url]) => (url as string).includes('mapillary'))).toBe(true);
+  });
+
+  it('uses Mapillary alone when there is no Street View key', async () => {
+    process.env.MAPILLARY_TOKEN = 'MLY|test';
+    mockByHost({ mapillary: { data: [mapillaryImage()] } });
+
+    expect((await findFrameImage({ coord: COORD, bearing: 90 }))?.source).toBe('mapillary');
   });
 });

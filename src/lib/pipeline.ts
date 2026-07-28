@@ -12,8 +12,8 @@ import { geocode } from './providers/geocode';
 import { dedupeWarnings, mapWithConcurrency, optional } from './providers/http';
 import {
   findCommonsImage,
+  findFrameImage,
   findMapillaryImage,
-  findStreetViewImage,
   hasMapillary,
   hasStreetView,
 } from './providers/imagery';
@@ -202,9 +202,7 @@ async function buildFrames(
   const images = canFetch
     ? await mapWithConcurrency(samples, 4, (sample) =>
         optional(
-          async () =>
-            (await findMapillaryImage({ coord: sample.coord, bearing: sample.bearing })) ??
-            (await findStreetViewImage({ coord: sample.coord, bearing: sample.bearing })),
+          () => findFrameImage({ coord: sample.coord, bearing: sample.bearing }),
           null,
           warnings,
         ),
