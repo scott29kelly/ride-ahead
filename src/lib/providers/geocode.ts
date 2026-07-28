@@ -9,10 +9,34 @@ interface NominatimResult {
 }
 
 /**
+ * Nominatim's usage policy is an absolute maximum of one request per second,
+ * and they block addresses that ignore it. Every lookup goes through one queue
+ * so that holds however many callers there are.
+ */
+const DEFAULT_MIN_INTERVAL_MS = 1_100;
+
+/** Self-hosted Nominatim instances have no such limit; let them say so. */
+function minIntervalMs(): number {
+  const configured = Number(process.env.NOMINATIM_MIN_INTERVAL_MS);
+  return Number.isFinite(configured) && configured >= 0 ? configured : DEFAULT_MIN_INTERVAL_MS;
+}
+
+let queue: Promise<unknown> = Promise.resolve();
+
+function throttled<T>(work: () => Promise<T>): Promise<T> {
+  const result = queue.then(work);
+  // Space the *next* call regardless of whether this one succeeded — a failure
+  // still cost a request as far as Nominatim is concerned.
+  const spacer = () => new Promise((resolve) => setTimeout(resolve, minIntervalMs()));
+  queue = result.then(spacer, spacer);
+  return result;
+}
+
+/**
  * Free-text place lookup via Nominatim (OpenStreetMap).
  *
- * Nominatim's usage policy caps this at 1 request/second, so callers should
- * geocode sequentially rather than fanning out.
+ * Requests are serialised and paced internally, so callers can geocode in a
+ * plain loop without having to know about the rate limit.
  */
 export async function geocode(query: string, near?: LngLat): Promise<Place> {
   const trimmed = query.trim();
@@ -24,8 +48,29 @@ export async function geocode(query: string, near?: LngLat): Promise<Place> {
     return { name: trimmed, label: `${literal[1].toFixed(5)}, ${literal[0].toFixed(5)}`, coord: literal };
   }
 
+  const first = await search(trimmed, near);
+  if (first) return toPlace(first, trimmed);
+
+  // Nominatim's house numbers come from OSM, which covers individual US
+  // addresses unevenly — "300 Veterans Way" may not exist even where the
+  // street does. Retrying without the number lands you on the right road
+  // instead of failing outright, which for a route preview is close enough.
+  const withoutHouseNumber = trimmed.replace(/^\s*\d+[a-z]?\s+/i, '');
+  if (withoutHouseNumber !== trimmed && withoutHouseNumber.length > 2) {
+    const second = await search(withoutHouseNumber, near);
+    if (second) return toPlace(second, withoutHouseNumber);
+  }
+
+  throw new ProviderError(
+    'nominatim',
+    `no match for "${trimmed}". OpenStreetMap's address coverage is patchy for ` +
+      `individual house numbers — try a nearby landmark, a street and town, or paste "lat, lng" coordinates.`,
+  );
+}
+
+async function search(query: string, near?: LngLat): Promise<NominatimResult | null> {
   const params = new URLSearchParams({
-    q: trimmed,
+    q: query,
     format: 'jsonv2',
     limit: '1',
     addressdetails: '0',
@@ -38,16 +83,18 @@ export async function geocode(query: string, near?: LngLat): Promise<Place> {
     params.set('viewbox', `${lng - pad},${lat + pad},${lng + pad},${lat - pad}`);
   }
 
-  const results = await fetchJson<NominatimResult[]>(
-    `https://nominatim.openstreetmap.org/search?${params}`,
-    { provider: 'nominatim' },
+  const results = await throttled(() =>
+    fetchJson<NominatimResult[]>(`https://nominatim.openstreetmap.org/search?${params}`, {
+      provider: 'nominatim',
+    }),
   );
 
-  const hit = results[0];
-  if (!hit) throw new ProviderError('nominatim', `no match for "${trimmed}"`);
+  return results[0] ?? null;
+}
 
+function toPlace(hit: NominatimResult, fallbackName: string): Place {
   return {
-    name: hit.name || trimmed,
+    name: hit.name || fallbackName,
     label: hit.display_name,
     coord: [Number(hit.lon), Number(hit.lat)],
   };

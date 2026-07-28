@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { buildPreviews, isDemoMode } from '@/lib/pipeline';
+import { buildPreviews, InputError, isDemoMode } from '@/lib/pipeline';
 import type { BikeProfile, RouteRequest } from '@/lib/types';
 
 export const runtime = 'nodejs';
@@ -24,6 +24,14 @@ export async function POST(request: Request) {
     return NextResponse.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Could not build a preview.';
+
+    // An address nobody can resolve is a bad request, not a bad gateway.
+    // Reporting it as 502 tells you the server broke when the fix is to type
+    // something else.
+    if (error instanceof InputError) {
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
+
     console.error('[preview] failed:', error);
     return NextResponse.json({ error: message }, { status: 502 });
   }

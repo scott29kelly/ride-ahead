@@ -33,6 +33,23 @@ import type {
   RouteRequest,
 } from './types';
 
+/**
+ * A request that cannot be satisfied because of what was typed, rather than
+ * because something upstream failed. Callers map this to a 4xx: telling someone
+ * their address could not be found is not a server error, and reporting it as
+ * one sends them looking in the wrong place.
+ */
+export class InputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InputError';
+  }
+}
+
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** Frames in a preview. Enough to feel like a flythrough, few enough to stay inside rate limits. */
 const TARGET_FRAMES = 24;
 
@@ -53,7 +70,7 @@ export async function buildPreviews(request: RouteRequest): Promise<PreviewRespo
   const warnings: string[] = [];
 
   const destinations = request.destinations.map((value) => value.trim()).filter(Boolean).slice(0, 3);
-  if (destinations.length === 0) throw new Error('Add at least one destination.');
+  if (destinations.length === 0) throw new InputError('Add at least one destination.');
 
   if (demo) {
     return {
@@ -65,11 +82,34 @@ export async function buildPreviews(request: RouteRequest): Promise<PreviewRespo
     };
   }
 
-  // Nominatim asks for no more than one request per second, so geocode in series.
-  const start = await geocode(request.start);
+  let start: Place;
+  try {
+    start = await geocode(request.start);
+  } catch (error) {
+    // Nothing can be built without a starting point, and an address we cannot
+    // resolve is a problem with the input, not with the provider.
+    throw new InputError(message(error));
+  }
+
+  // One unresolvable destination should cost you that destination, not the
+  // whole comparison — the same rule the routing stage already follows.
+  // geocode() paces itself against Nominatim's rate limit, so a plain loop is
+  // both correct and polite here.
   const places: Place[] = [];
   for (const destination of destinations) {
-    places.push(await geocode(destination, start.coord));
+    try {
+      places.push(await geocode(destination, start.coord));
+    } catch (error) {
+      warnings.push(message(error));
+    }
+  }
+
+  if (places.length === 0) {
+    throw new InputError(
+      destinations.length === 1
+        ? warnings[0]
+        : `None of those destinations could be found. ${warnings.join(' ')}`,
+    );
   }
 
   // Routes are independent, so build them concurrently. A failure on one
@@ -88,7 +128,7 @@ export async function buildPreviews(request: RouteRequest): Promise<PreviewRespo
     throw new Error(warnings.join('; ') || 'Could not build any route.');
   }
 
-  return { routes, demoMode: false, warnings };
+  return { routes, demoMode: false, warnings: dedupeWarnings(warnings) };
 }
 
 async function buildLivePreview(

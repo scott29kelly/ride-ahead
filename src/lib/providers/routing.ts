@@ -30,8 +30,9 @@ interface OrsResponse {
   features: {
     geometry: { coordinates: [number, number, number?][] };
     properties: {
-      // ORS has moved ascent/descent between `properties` and `properties.summary`
-      // across versions, so both are declared and both are read below.
+      // Live ORS (July 2026) returns ascent/descent at `properties.ascent`.
+      // It has put them under `summary` in other versions, so both are read
+      // below — cheap insurance against a field that has moved before.
       summary?: { distance?: number; duration?: number; ascent?: number; descent?: number };
       ascent?: number;
       descent?: number;
