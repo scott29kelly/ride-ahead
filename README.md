@@ -189,6 +189,13 @@ has to be run somewhere with network access to those hosts.
   so the corridor bulges slightly on tight bends. Covering all of a long ride
   approximately beats covering the first half of it exactly.
 
+## Where this is going
+
+[`PRODUCT-BRIEF.md`](PRODUCT-BRIEF.md) describes what the app is meant to become
+— the gap between the current preview and a genuinely photoreal one, the
+constraints any answer has to survive, and the questions still open. Start there
+if you are picking this up to work on the experience rather than the plumbing.
+
 ## Natural next steps
 
 - GPX export, so a chosen route goes straight to a bike computer.
