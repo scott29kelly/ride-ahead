@@ -9,7 +9,7 @@ import {
 import { DEMO_START, matchDemoRoute, type DemoRoute } from './demo/fixtures';
 import { placeholderImage } from './demo/placeholder';
 import { geocode } from './providers/geocode';
-import { mapWithConcurrency, optional } from './providers/http';
+import { dedupeWarnings, mapWithConcurrency, optional } from './providers/http';
 import {
   findCommonsImage,
   findMapillaryImage,
@@ -146,7 +146,7 @@ async function buildLivePreview(
       pois: poiResult.provider,
       imagery: [...usedSources],
     },
-    warnings,
+    warnings: dedupeWarnings(warnings),
   };
 }
 

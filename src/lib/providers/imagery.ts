@@ -1,6 +1,6 @@
 import { bearingDelta, boundingBox, haversine } from '../geo';
 import type { Image, LngLat } from '../types';
-import { fetchJson } from './http';
+import { fetchJson, ProviderError } from './http';
 
 /**
  * Photo lookup for a spot on the route.
@@ -48,15 +48,21 @@ export async function findMapillaryImage(query: ImageryQuery): Promise<Image | n
   const [west, south, east, north] = boundingBox([query.coord], radius);
 
   const params = new URLSearchParams({
-    access_token: token,
     bbox: `${west},${south},${east},${north}`,
-    fields: 'id,thumb_1024_url,computed_geometry,geometry,captured_at,compass_angle',
+    fields: 'id,thumb_1024_url,thumb_2048_url,computed_geometry,geometry,captured_at,compass_angle',
     limit: '25',
   });
 
   const body = await fetchJson<{ data?: MapillaryImage[] }>(
     `https://graph.mapillary.com/images?${params}`,
-    { provider: 'mapillary', timeoutMs: 12_000 },
+    {
+      provider: 'mapillary',
+      // The token goes in the header, not the query string: that is the form
+      // Mapillary documents, and it keeps the credential out of any URL that
+      // might be logged. Note the scheme is "OAuth", not "Bearer".
+      headers: { Authorization: `OAuth ${token}` },
+      timeoutMs: 12_000,
+    },
   );
 
   const candidates = body.data ?? [];
@@ -69,6 +75,7 @@ export async function findMapillaryImage(query: ImageryQuery): Promise<Image | n
 
   return {
     url: best.thumb_1024_url,
+    fullUrl: best.thumb_2048_url,
     source: 'mapillary',
     attribution: 'Mapillary (CC BY-SA)',
     coord: coords ? [coords[0], coords[1]] : undefined,
@@ -116,21 +123,20 @@ function recencyBonus(capturedAt?: number): number {
   return Math.max(0, 20 - years * 2.5);
 }
 
+interface CommonsPage {
+  title: string;
+  imageinfo?: {
+    thumburl?: string;
+    url?: string;
+    descriptionurl?: string;
+    extmetadata?: { Artist?: { value?: string }; LicenseShortName?: { value?: string } };
+  }[];
+}
+
 interface CommonsResponse {
-  query?: {
-    pages?: Record<
-      string,
-      {
-        title: string;
-        imageinfo?: {
-          thumburl?: string;
-          url?: string;
-          descriptionurl?: string;
-          extmetadata?: { Artist?: { value?: string }; LicenseShortName?: { value?: string } };
-        }[];
-      }
-    >;
-  };
+  // formatversion=2 returns `pages` as an array. Older callers see the
+  // keyed-by-pageid object, so both are accepted and normalised below.
+  query?: { pages?: CommonsPage[] | Record<string, CommonsPage> };
 }
 
 /**
@@ -157,7 +163,7 @@ export async function findCommonsImage(coord: LngLat, radius = 300): Promise<Ima
     timeoutMs: 12_000,
   });
 
-  const pages = Object.values(body.query?.pages ?? {});
+  const pages: CommonsPage[] = Object.values(body.query?.pages ?? {});
   for (const page of pages) {
     const info = page.imageinfo?.[0];
     const url = info?.thumburl ?? info?.url;
@@ -190,12 +196,26 @@ export async function findStreetViewImage(query: ImageryQuery): Promise<Image | 
   const [lng, lat] = query.coord;
   const radius = query.radius ?? 60;
 
-  const metadata = await fetchJson<{ status: string; date?: string; location?: { lat: number; lng: number } }>(
+  const metadata = await fetchJson<{
+    status: string;
+    error_message?: string;
+    date?: string;
+    location?: { lat: number; lng: number };
+  }>(
     `https://maps.googleapis.com/maps/api/streetview/metadata?location=${lat},${lng}&radius=${radius}&source=outdoor&key=${key}`,
     { provider: 'street-view', timeoutMs: 10_000 },
   );
 
-  if (metadata.status !== 'OK') return null;
+  // ZERO_RESULTS / NOT_FOUND just mean no coverage here, which is normal and
+  // not worth a warning. Anything else is a configuration problem that would
+  // otherwise repeat silently on every frame of every route.
+  if (metadata.status === 'ZERO_RESULTS' || metadata.status === 'NOT_FOUND') return null;
+  if (metadata.status !== 'OK') {
+    throw new ProviderError(
+      'street-view',
+      `metadata status ${metadata.status}${metadata.error_message ? ` — ${metadata.error_message}` : ''}`,
+    );
+  }
 
   const params = new URLSearchParams({
     size: '1024x576',

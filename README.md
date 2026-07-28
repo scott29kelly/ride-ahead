@@ -31,7 +31,9 @@ before deciding which providers to wire up.
 ### Going live
 
 ```bash
-cp .env.example .env.local     # add ORS_API_KEY, set RIDEAHEAD_DEMO=0
+npm run setup                  # writes .env.local from the template
+                               # then: RIDEAHEAD_DEMO=0, paste ORS_API_KEY,
+                               # real contact in RIDEAHEAD_USER_AGENT
 npm run check                  # one real request to every provider
 npm run dev
 ```
@@ -41,6 +43,26 @@ before the app — if something is misconfigured or a provider's response shape
 has drifted, this says which one in a couple of seconds rather than surfacing as
 an empty preview later. It exits non-zero when a required provider fails, so it
 works in CI as well.
+
+It checks the configuration first, because most first-run failures are there
+rather than in the network: demo mode still on, a Mapillary Client ID pasted
+where the Client Token goes, an ORS key with `Bearer` still attached, the
+placeholder email left in the user agent.
+
+Two things it deliberately distinguishes:
+
+- **A rejected credential is a failure. An empty result is not.** A valid
+  Mapillary token over an unsurveyed street returns zero images, which is a
+  coverage gap, not a setup problem. Reporting those the same way sends you
+  looking for a bug in the wrong place.
+- **It asserts the exact property paths `src/lib/providers/` reads**, not just
+  that the request succeeded — a check that goes green while the app finds
+  nothing is worse than no check. Add `--verbose` to print the response shapes
+  when something disagrees.
+
+Each request mirrors the one the app makes: same endpoint, same headers, same
+requested fields, and the same corridor query shape for Overpass. Change a
+provider module and change the check with it.
 
 ---
 
@@ -101,7 +123,7 @@ breaking it.
 ## What's verified, and what isn't
 
 ```bash
-npm test        # 46 tests
+npm test        # 88 tests
 npm run build
 ```
 
@@ -110,11 +132,19 @@ elevation), the ranking logic, and the full pipeline end to end through demo
 mode. The UI was driven in a headless browser — form, flythrough playback,
 route switching, elevation marker.
 
-**Not yet verified against live APIs.** This was built in a sandbox with
-outbound network access blocked, so every real provider call — ORS, Nominatim,
-Overpass, Mapillary, Commons — is written to spec but has never actually run.
-Expect to shake out schema mismatches on first real use. That's the first thing
-to do with a key in hand.
+The provider modules are tested against a stubbed HTTP layer, which pins the
+things that are easy to get wrong and impossible to see without a key: that ORS
+is asked for elevation and warns when it does not supply it, that the Mapillary
+token travels as an `OAuth` header rather than in the query string, that a
+rejected credential raises instead of looking like an empty result, and that the
+Overpass corridor covers the whole route on a long ride.
+
+**Still not verified against live APIs.** This was built in a sandbox with
+outbound network access blocked, so no real provider call — ORS, Nominatim,
+Overpass, Mapillary, Commons — has ever actually run. Stubs pin the request the
+app sends and what it does with the answer; they cannot tell you the real
+response looks like the stub. `npm run check` is what closes that gap, and it
+has to be run somewhere with network access to those hosts.
 
 ---
 
@@ -132,6 +162,11 @@ to do with a key in hand.
   which is a guess worth revisiting against real usage.
 - **Round trips route out and back the same way.** A genuine loop needs a
   different approach than a there-and-back waypoint list.
+- **The place corridor gets coarser on very long rides.** The spine is capped at
+  300 vertices because each one is repeated in every clause of the Overpass
+  query. Past roughly 50 km the spacing widens to keep covering the whole route,
+  so the corridor bulges slightly on tight bends. Covering all of a long ride
+  approximately beats covering the first half of it exactly.
 
 ## Natural next steps
 

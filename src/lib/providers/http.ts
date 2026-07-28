@@ -78,6 +78,21 @@ export async function optional<T>(
   }
 }
 
+/**
+ * Collapse repeated warnings into one line with a count.
+ *
+ * Imagery is fetched once per frame, so a single misconfiguration — an expired
+ * token, a provider refusing the key — fails identically dozens of times per
+ * route. Reported verbatim that buries every other warning under one repeated
+ * message, which is exactly the moment the other warnings matter most.
+ */
+export function dedupeWarnings(warnings: string[]): string[] {
+  const counts = new Map<string, number>();
+  for (const warning of warnings) counts.set(warning, (counts.get(warning) ?? 0) + 1);
+
+  return [...counts].map(([warning, count]) => (count > 1 ? `${warning} (×${count})` : warning));
+}
+
 /** Resolve promises with a cap on how many run at once, to stay inside provider rate limits. */
 export async function mapWithConcurrency<T, R>(
   items: T[],

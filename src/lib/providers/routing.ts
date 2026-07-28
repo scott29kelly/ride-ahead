@@ -30,7 +30,9 @@ interface OrsResponse {
   features: {
     geometry: { coordinates: [number, number, number?][] };
     properties: {
-      summary?: { distance?: number; duration?: number };
+      // ORS has moved ascent/descent between `properties` and `properties.summary`
+      // across versions, so both are declared and both are read below.
+      summary?: { distance?: number; duration?: number; ascent?: number; descent?: number };
       ascent?: number;
       descent?: number;
     };
@@ -47,7 +49,13 @@ async function routeWithOrs(
     {
       provider: 'openrouteservice',
       method: 'POST',
-      headers: { Authorization: key, 'Content-Type': 'application/json' },
+      headers: {
+        Authorization: key,
+        'Content-Type': 'application/json',
+        // The /geojson endpoint content-negotiates; the default application/json
+        // Accept from fetchJson is not what it advertises for this route.
+        Accept: 'application/geo+json, application/json',
+      },
       body: JSON.stringify({
         coordinates: waypoints,
         elevation: true,
@@ -65,15 +73,26 @@ async function routeWithOrs(
   const hasElevation = elevations.some((value) => Number.isFinite(value));
 
   const points = buildRoutePoints(coords, hasElevation ? elevations : undefined);
+  const { summary } = feature.properties;
+
+  const warnings: string[] = [];
+  if (!hasElevation) {
+    // We asked for elevation and got a 2D geometry back. Everything downstream
+    // that reads elevation quietly degrades, so say why rather than just
+    // rendering a preview with no climb profile.
+    warnings.push(
+      'OpenRouteService returned this route without elevation, so there is no climb profile or gradient for it.',
+    );
+  }
 
   return {
     points,
-    distance: feature.properties.summary?.distance ?? points.at(-1)?.distance ?? 0,
-    duration: feature.properties.summary?.duration ?? 0,
-    ascent: feature.properties.ascent,
-    descent: feature.properties.descent,
+    distance: summary?.distance ?? points.at(-1)?.distance ?? 0,
+    duration: summary?.duration ?? 0,
+    ascent: feature.properties.ascent ?? summary?.ascent,
+    descent: feature.properties.descent ?? summary?.descent,
     provider: `OpenRouteService (${profile})`,
-    warnings: [],
+    warnings,
   };
 }
 

@@ -44,27 +44,57 @@ interface OverpassElement {
  * on a route with any bend, a bbox pulls in a huge amount of scenery you
  * will never actually ride past.
  */
+/**
+ * Vertices allowed in the corridor spine. The coordinate list is repeated once
+ * per clause, so this bounds the query body as well as Overpass's work.
+ */
+const MAX_SPINE_POINTS = 300;
+
+/** Seconds given to Overpass server-side. The client waits longer than this. */
+const OVERPASS_TIMEOUT_S = 50;
+
+export function buildCorridorQuery(points: RoutePoint[], radius: number): string {
+  const total = points.at(-1)?.distance ?? 0;
+
+  // Space the spine so circles of `radius` still overlap, leaving no gaps
+  // between them. On a route long enough that this would need more than
+  // MAX_SPINE_POINTS vertices, widen the spacing to cover the whole route
+  // rather than truncating it — a silently POI-less second half is worse
+  // than a slightly coarser corridor.
+  const idealGap = Math.max(120, radius * 0.9);
+  const gap = Math.max(idealGap, total / MAX_SPINE_POINTS);
+  const spine = decimate(points, gap);
+
+  // 4dp is ~11m, well inside a corridor measured in hundreds of metres, and
+  // meaningfully shorter than 5dp once repeated across every clause.
+  const coordList = spine.map((p) => `${p.coord[1].toFixed(4)},${p.coord[0].toFixed(4)}`).join(',');
+  const around = `(around:${radius},${coordList})`;
+
+  // Rules sharing an OSM key collapse into one clause. Each clause repeats the
+  // whole coordinate list, so going from one clause per rule to one per key is
+  // the difference between a query Overpass runs and one it times out on.
+  const byKey = new Map<string, string[]>();
+  for (const { key, values } of RULES) {
+    const existing = byKey.get(key) ?? [];
+    byKey.set(key, existing.includes('*') ? existing : [...existing, ...values]);
+  }
+
+  const clauses = [...byKey].map(([key, values]) =>
+    values.includes('*')
+      ? `nwr${around}["${key}"];`
+      : `nwr${around}["${key}"~"^(${values.join('|')})$"];`,
+  );
+
+  return `[out:json][timeout:${OVERPASS_TIMEOUT_S}];\n(\n  ${clauses.join('\n  ')}\n);\nout tags center qt;`;
+}
+
 export async function findPois(
   points: RoutePoint[],
   radius = 180,
 ): Promise<{ pois: Poi[]; provider: string }> {
   if (points.length === 0) return { pois: [], provider: 'none' };
 
-  // Overpass chokes on very long coordinate lists, so thin the corridor spine
-  // and space samples under the radius to avoid gaps between the circles.
-  const spine = decimate(points, Math.max(120, radius * 0.9)).slice(0, 300);
-  const coordList = spine.map((p) => `${p.coord[1].toFixed(5)},${p.coord[0].toFixed(5)}`).join(',');
-  const around = `(around:${radius},${coordList})`;
-
-  const clauses = RULES.map(({ key, values }) =>
-    values[0] === '*'
-      ? `nwr${around}["${key}"];`
-      : `nwr${around}["${key}"~"^(${values.join('|')})$"];`,
-  ).join('\n  ');
-
-  const query = `[out:json][timeout:60];\n(\n  ${clauses}\n);\nout center tags qt;`;
-
-  const body = await queryOverpass(query);
+  const body = await queryOverpass(buildCorridorQuery(points, radius));
   const projected = collect(body.elements ?? [], points, radius);
 
   return { pois: projected, provider: 'OpenStreetMap via Overpass' };
@@ -80,7 +110,10 @@ async function queryOverpass(query: string): Promise<{ elements?: OverpassElemen
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ data: query }).toString(),
-        timeoutMs: 60_000,
+        // Comfortably longer than the server-side [timeout:] above, which is
+        // wall-clock from when Overpass starts work — the client also has to
+        // absorb time spent queued before that.
+        timeoutMs: (OVERPASS_TIMEOUT_S + 30) * 1000,
       });
     } catch (error) {
       lastError = error;
